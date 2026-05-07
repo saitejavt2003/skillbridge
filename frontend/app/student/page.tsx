@@ -1,53 +1,105 @@
 "use client";
 
+import { UserButton, useUser } from "@clerk/nextjs";
 import { useEffect, useState } from "react";
-import { useUser } from "@clerk/nextjs";
+import { apiFetch } from "@/lib/api";
+
+type Session = {
+  id: number;
+  title: string;
+  date: string;
+  trainer_name?: string;
+  batch_name?: string;
+};
 
 export default function Student() {
-  const { user } = useUser();
-  const [sessions, setSessions] = useState([]);
-  const [dbUser, setDbUser] = useState<any>(null);
+  const { user, isLoaded } = useUser();
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    if (user) {
-      fetch(`http://localhost:5000/get-user/${user.id}`)
-        .then((res) => res.json())
-        .then((data) => setDbUser(data));
-    }
+    const loadSessions = async () => {
+      if (!user) return;
 
-    fetch("http://localhost:5000/sessions")
-      .then((res) => res.json())
-      .then((data) => setSessions(data));
-  }, [user]);
+      try {
+        const res = await apiFetch("/sessions", {
+          headers: {
+            "clerk-id": user.id,
+          },
+        });
+        setSessions(await res.json());
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Unable to load sessions");
+      }
+    };
+
+    if (isLoaded) loadSessions();
+  }, [user, isLoaded]);
 
   const markAttendance = async (sessionId: number) => {
-    await fetch("http://localhost:5000/mark-attendance", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "clerk-id": user?.id || "",
-      },
-      body: JSON.stringify({
-        session_id: sessionId,
-        student_id: dbUser?.id,
-      }),
-    });
+    if (!user) return;
 
-    alert("Attendance marked!");
+    setMessage("");
+    setError("");
+
+    try {
+      const res = await apiFetch("/mark-attendance", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "clerk-id": user.id,
+        },
+        body: JSON.stringify({
+          session_id: sessionId,
+        }),
+      });
+      const data = await res.json();
+      setMessage(data.message || "Attendance marked");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to mark attendance");
+    }
   };
 
-  return (
-    <div style={{ padding: 20 }}>
-      <h1>Student Dashboard 🎓</h1>
+  if (!isLoaded) return <main className="p-8">Loading...</main>;
 
-      {sessions.map((s: any) => (
-        <div key={s.id}>
-          <p>{s.title} - {s.date}</p>
-          <button onClick={() => markAttendance(s.id)}>
-            Mark Attendance
-          </button>
+  return (
+    <main className="mx-auto max-w-4xl px-6 py-8">
+      <header className="mb-8 flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-semibold">Student Dashboard</h1>
+          <p className="mt-1 text-gray-600">Welcome, {user?.firstName || "student"}</p>
         </div>
-      ))}
-    </div>
+        <UserButton />
+      </header>
+
+      <section className="space-y-3">
+        {sessions.map((session) => (
+          <article key={session.id} className="rounded-md border p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="font-medium">{session.title}</h2>
+                <p className="text-sm text-gray-600">
+                  {session.batch_name || "No batch"} -{" "}
+                  {new Date(session.date).toLocaleDateString()}{" "}
+                  {session.trainer_name ? `- ${session.trainer_name}` : ""}
+                </p>
+              </div>
+              <button
+                className="rounded-md bg-black px-4 py-2 text-white"
+                onClick={() => markAttendance(session.id)}
+              >
+                Mark attendance
+              </button>
+            </div>
+          </article>
+        ))}
+
+        {sessions.length === 0 && <p>No sessions available yet.</p>}
+      </section>
+
+      {message && <p className="mt-5 text-green-700">{message}</p>}
+      {error && <p className="mt-5 text-red-600">{error}</p>}
+    </main>
   );
 }
